@@ -29,9 +29,16 @@ func loadAggregate(ctx context.Context, q queryer, id string) (*domain.CaseAggre
 		json.Unmarshal([]byte(reasons), &r.RiskReasons)
 		r.CalculatedLevel = domain.RiskLevel(level)
 		r.ReviewStatus = domain.ReviewStatus(review)
-		r.SubmittedAt = parseTime(submitted)
+		submittedAt, perr := parseTime(submitted)
+		if perr != nil {
+			return nil, domain.FieldError("risk_assessments.submitted_at", "风险基线提交时间解析失败："+perr.Error())
+		}
+		r.SubmittedAt = submittedAt
 		if reviewedAt != "" {
-			t := parseTime(reviewedAt)
+			t, perr := parseTime(reviewedAt)
+			if perr != nil {
+				return nil, domain.FieldError("risk_assessments.reviewed_at", "风险基线审核时间解析失败："+perr.Error())
+			}
 			r.ReviewedAt = &t
 		}
 		agg.Risk = &r
@@ -83,15 +90,31 @@ func loadAggregate(ctx context.Context, q queryer, id string) (*domain.CaseAggre
 			rows.Close()
 			return nil, err
 		}
-		o.ObservedOn = parseTime(observed)
-		o.RecordedAt = parseTime(recorded)
+		o.ObservedOn, err = parseTime(observed)
+		if err != nil {
+			rows.Close()
+			return nil, domain.FieldError("observations.observed_on", "观察日期解析失败："+err.Error())
+		}
+		o.RecordedAt, err = parseTime(recorded)
+		if err != nil {
+			rows.Close()
+			return nil, domain.FieldError("observations.recorded_at", "观察记录时间解析失败："+err.Error())
+		}
 		o.Late = late != 0
 		if windowDue != "" {
-			t := parseTime(windowDue)
+			t, perr := parseTime(windowDue)
+			if perr != nil {
+				rows.Close()
+				return nil, domain.FieldError("observations.window_due_on", "观察窗口时间解析失败："+perr.Error())
+			}
 			o.WindowDueOn = &t
 		}
 		if lateReviewed != "" {
-			t := parseTime(lateReviewed)
+			t, perr := parseTime(lateReviewed)
+			if perr != nil {
+				rows.Close()
+				return nil, domain.FieldError("observations.late_reviewed_at", "补录审批时间解析失败："+perr.Error())
+			}
 			o.LateReviewedAt = &t
 		}
 		agg.Observations = append(agg.Observations, o)
@@ -110,13 +133,26 @@ func loadAggregate(ctx context.Context, q queryer, id string) (*domain.CaseAggre
 			return nil, err
 		}
 		d.Status = domain.DeviationStatus(status)
-		d.OpenedAt = parseTime(opened)
+		openedAt, perr := parseTime(opened)
+		if perr != nil {
+			rows.Close()
+			return nil, domain.FieldError("deviations.opened_at", "偏差开启时间解析失败："+perr.Error())
+		}
+		d.OpenedAt = openedAt
 		if verified != "" {
-			t := parseTime(verified)
+			t, perr := parseTime(verified)
+			if perr != nil {
+				rows.Close()
+				return nil, domain.FieldError("deviations.verified_at", "偏差验证时间解析失败："+perr.Error())
+			}
 			d.VerifiedAt = &t
 		}
 		if due != "" {
-			t := parseTime(due)
+			t, perr := parseTime(due)
+			if perr != nil {
+				rows.Close()
+				return nil, domain.FieldError("deviations.verification_due_at", "偏差截止时间解析失败："+perr.Error())
+			}
 			d.VerificationDueAt = &t
 		}
 		d.Escalated = escalated != 0
@@ -131,8 +167,16 @@ func loadAggregate(ctx context.Context, q queryer, id string) (*domain.CaseAggre
 	if err == nil {
 		json.Unmarshal([]byte(snapshot), &d.EligibilitySnapshot)
 		d.Outcome = domain.Outcome(outcome)
-		d.DecidedAt = parseTime(decided)
-		d.ArchivedAt = parseTime(archived)
+		decidedAt, perr := parseTime(decided)
+		if perr != nil {
+			return nil, domain.FieldError("decisions.decided_at", "决定时间解析失败："+perr.Error())
+		}
+		d.DecidedAt = decidedAt
+		archivedAt, perr := parseTime(archived)
+		if perr != nil {
+			return nil, domain.FieldError("decisions.archived_at", "归档时间解析失败："+perr.Error())
+		}
+		d.ArchivedAt = archivedAt
 		if integrity != "" {
 			var ai domain.ArchiveIntegrity
 			if json.Unmarshal([]byte(integrity), &ai) == nil {

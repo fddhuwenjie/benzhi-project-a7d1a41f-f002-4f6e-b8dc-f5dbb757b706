@@ -71,12 +71,31 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func formatTime(t time.Time) string    { return t.UTC().Format(time.RFC3339Nano) }
-func parseTime(value string) time.Time { t, _ := time.Parse(time.RFC3339Nano, value); return t }
-func parseNullable(value sql.NullString) *time.Time {
-	if !value.Valid {
-		return nil
+func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+
+// parseTime strictly parses a required persisted timestamp. Empty values or
+// anything that does not conform to RFC3339Nano is rejected so callers never
+// silently receive a zero time.
+func parseTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, fmt.Errorf("时间为空")
 	}
-	t := parseTime(value.String)
-	return &t
+	t, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("时间格式非法：%w", err)
+	}
+	return t, nil
+}
+
+// parseNullable parses an optional persisted timestamp. NULL/empty values map
+// to nil, but any non-empty value must be valid RFC3339Nano.
+func parseNullable(value sql.NullString) (*time.Time, error) {
+	if !value.Valid || value.String == "" {
+		return nil, nil
+	}
+	t, err := parseTime(value.String)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }

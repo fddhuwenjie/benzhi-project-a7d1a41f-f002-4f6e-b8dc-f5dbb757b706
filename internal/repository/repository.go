@@ -236,7 +236,11 @@ func (r *Repository) Timeline(ctx context.Context, caseID string) ([]domain.Audi
 			return nil, err
 		}
 		e.Payload = json.RawMessage(raw)
-		e.CreatedAt = parseTime(created)
+		createdAt, err := parseTime(created)
+		if err != nil {
+			return nil, domain.FieldError("audit_events.created_at", "审计事件时间解析失败："+err.Error())
+		}
+		e.CreatedAt = createdAt
 		events = append(events, e)
 	}
 	return events, rows.Err()
@@ -254,10 +258,20 @@ func scanCase(s scanner) (domain.QuarantineCase, error) {
 	}
 	c.Status = domain.CaseStatus(status)
 	c.RiskLevel = domain.RiskLevel(risk)
-	c.CreatedAt = parseTime(created)
-	c.ObservationStartedAt = parseNullable(started)
-	c.ExpectedReleaseAt = parseNullable(expected)
-	c.ClosedAt = parseNullable(closed)
+	createdAt, err := parseTime(created)
+	if err != nil {
+		return c, domain.FieldError("cases.created_at", "个案创建时间解析失败："+err.Error())
+	}
+	c.CreatedAt = createdAt
+	if c.ObservationStartedAt, err = parseNullable(started); err != nil {
+		return c, domain.FieldError("cases.observation_started_at", "隔离启动时间解析失败："+err.Error())
+	}
+	if c.ExpectedReleaseAt, err = parseNullable(expected); err != nil {
+		return c, domain.FieldError("cases.expected_release_at", "预期放行时间解析失败："+err.Error())
+	}
+	if c.ClosedAt, err = parseNullable(closed); err != nil {
+		return c, domain.FieldError("cases.closed_at", "个案关闭时间解析失败："+err.Error())
+	}
 	return c, nil
 }
 

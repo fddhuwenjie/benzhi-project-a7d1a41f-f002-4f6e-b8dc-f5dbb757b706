@@ -74,13 +74,6 @@ func (s *Service) CreateCase(ctx context.Context, input CreateCaseInput) (Envelo
 	}
 	now := s.clock.Now()
 	input.AccessionCode = strings.ToUpper(strings.TrimSpace(input.AccessionCode))
-	if existing, err := s.repo.FindByAccession(ctx, input.AccessionCode); err != nil {
-		return Envelope[domain.QuarantineCase]{}, err
-	} else if existing != nil {
-		e := domain.NewError(domain.CodeDuplicate, "材料编号已存在")
-		e.Details = map[string]any{"case_id": existing.ID, "status": existing.Status, "summary": existing}
-		return Envelope[domain.QuarantineCase]{}, e
-	}
 	c, err := domain.NewCase(id("case_"), input.AccessionCode, input.ScientificName, input.OriginRegion, input.IntroductionPurpose, input.QuarantineZone, now)
 	if err != nil {
 		return Envelope[domain.QuarantineCase]{}, err

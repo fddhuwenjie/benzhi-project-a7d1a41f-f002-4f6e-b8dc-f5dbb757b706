@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 
 	"quarantine-workbench/internal/domain"
 )
@@ -38,19 +39,29 @@ func loadAggregate(ctx context.Context, q queryer, id string) (*domain.CaseAggre
 	} else if err != sql.ErrNoRows {
 		return nil, err
 	}
-	rowsB, err := q.QueryContext(ctx, `SELECT payload FROM risk_baselines WHERE case_id=? ORDER BY version`, id)
-	if err == nil {
-		for rowsB.Next() {
-			var raw string
-			if rowsB.Scan(&raw) == nil {
-				var b domain.RiskBaseline
-				if json.Unmarshal([]byte(raw), &b) == nil {
-					agg.RiskBaselines = append(agg.RiskBaselines, b)
-				}
-			}
-		}
-		rowsB.Close()
+	rowsB, err := q.QueryContext(ctx, `SELECT version, payload FROM risk_baselines WHERE case_id=? ORDER BY version`, id)
+	if err != nil {
+		return nil, fmt.Errorf("加载风险基线失败(case_id=%s, table=risk_baselines): %w", id, err)
 	}
+	for rowsB.Next() {
+		var version int
+		var raw string
+		if err = rowsB.Scan(&version, &raw); err != nil {
+			rowsB.Close()
+			return nil, fmt.Errorf("扫描风险基线失败(case_id=%s, table=risk_baselines): %w", id, err)
+		}
+		var b domain.RiskBaseline
+		if err = json.Unmarshal([]byte(raw), &b); err != nil {
+			rowsB.Close()
+			return nil, fmt.Errorf("解析风险基线失败(case_id=%s, table=risk_baselines, version=%d): %w", id, version, err)
+		}
+		agg.RiskBaselines = append(agg.RiskBaselines, b)
+	}
+	if err = rowsB.Err(); err != nil {
+		rowsB.Close()
+		return nil, fmt.Errorf("遍历风险基线失败(case_id=%s, table=risk_baselines): %w", id, err)
+	}
+	rowsB.Close()
 	var checklistRaw string
 	if err = q.QueryRowContext(ctx, `SELECT payload FROM review_checklists WHERE case_id=? ORDER BY baseline_version DESC LIMIT 1`, id).Scan(&checklistRaw); err == nil {
 		var cl domain.ReviewChecklist

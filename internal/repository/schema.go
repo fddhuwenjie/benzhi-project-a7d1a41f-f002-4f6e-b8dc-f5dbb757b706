@@ -39,7 +39,7 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS deviations (id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE, severity TEXT NOT NULL, scope TEXT NOT NULL, finding TEXT NOT NULL, containment_action TEXT NOT NULL, status TEXT NOT NULL, verification_note TEXT NOT NULL, opened_at TEXT NOT NULL, verified_at TEXT, verification_due_at TEXT, escalated INTEGER NOT NULL DEFAULT 0, verification_evidence TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS decisions (id TEXT PRIMARY KEY, case_id TEXT NOT NULL UNIQUE REFERENCES cases(id) ON DELETE CASCADE, eligibility_snapshot TEXT NOT NULL, outcome TEXT NOT NULL, rationale TEXT NOT NULL, decided_by TEXT NOT NULL, decided_at TEXT NOT NULL, archived_at TEXT NOT NULL, integrity TEXT NOT NULL DEFAULT '')`,
 		`CREATE TABLE IF NOT EXISTS audit_events (id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL REFERENCES cases(id) ON DELETE CASCADE, sequence INTEGER NOT NULL, event_type TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(case_id,sequence))`,
-		`CREATE TABLE IF NOT EXISTS request_results (request_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, response TEXT NOT NULL, created_at TEXT NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS request_results (request_id TEXT PRIMARY KEY, case_id TEXT NOT NULL, operation_type TEXT NOT NULL DEFAULT '', request_hash TEXT NOT NULL DEFAULT '', response TEXT NOT NULL, created_at TEXT NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS risk_baselines (case_id TEXT NOT NULL, version INTEGER NOT NULL, payload TEXT NOT NULL, submitted_by TEXT NOT NULL, submitted_at TEXT NOT NULL, PRIMARY KEY(case_id,version), FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE)`,
 		`CREATE TABLE IF NOT EXISTS review_checklists (case_id TEXT NOT NULL, baseline_version INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(case_id,baseline_version), FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE)`,
 		`CREATE TABLE IF NOT EXISTS eligibility_snapshots (case_id TEXT NOT NULL, revision INTEGER NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(case_id,revision), FOREIGN KEY(case_id) REFERENCES cases(id) ON DELETE CASCADE)`,
@@ -59,6 +59,9 @@ func migrate(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE observations ADD COLUMN late_reviewed_at TEXT`,
 		`ALTER TABLE deviations ADD COLUMN assigned_role TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE deviations ADD COLUMN rounds TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE request_results ADD COLUMN operation_type TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE request_results ADD COLUMN request_hash TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_request_results_lookup ON request_results(request_id, operation_type, request_hash)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {

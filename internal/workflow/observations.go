@@ -61,6 +61,17 @@ type AddObservationInput struct {
 	LateReason        string `json:"late_reason,omitempty"`
 }
 
+type addObservationPayload struct {
+	ObservedOn        string `json:"observed_on"`
+	GrowthCondition   string `json:"growth_condition"`
+	PestSigns         string `json:"pest_signs"`
+	ReproductionSigns string `json:"reproduction_signs"`
+	SampleReference   string `json:"sample_reference"`
+	Notes             string `json:"notes"`
+	WindowDueOn       string `json:"window_due_on,omitempty"`
+	LateReason        string `json:"late_reason,omitempty"`
+}
+
 func (s *Service) AddObservation(ctx context.Context, caseID string, input AddObservationInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleObserver, RoleManager); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
@@ -70,7 +81,7 @@ func (s *Service) AddObservation(ctx context.Context, caseID string, input AddOb
 		return Envelope[domain.CaseAggregate]{}, domain.FieldError("observed_on", "观察日期格式必须为 YYYY-MM-DD")
 	}
 	now := s.clock.Now()
-	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "observation.recorded", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, addObservationPayload{ObservedOn: input.ObservedOn, GrowthCondition: strings.TrimSpace(input.GrowthCondition), PestSigns: strings.TrimSpace(input.PestSigns), ReproductionSigns: strings.TrimSpace(input.ReproductionSigns), SampleReference: strings.TrimSpace(input.SampleReference), Notes: strings.TrimSpace(input.Notes), WindowDueOn: input.WindowDueOn, LateReason: strings.TrimSpace(input.LateReason)}), caseID, input.ExpectedRevision, input.RequestID, "observation.recorded", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if err := a.Case.AddObservation(); err != nil {
 			return nil, err
 		}
@@ -126,12 +137,18 @@ type ReviewLateObservationInput struct {
 	Reason   string `json:"reason"`
 }
 
+type reviewLateObservationPayload struct {
+	ObservationID string `json:"observation_id"`
+	Approved      bool   `json:"approved"`
+	Reason        string `json:"reason"`
+}
+
 func (s *Service) ReviewLateObservation(ctx context.Context, caseID, observationID string, input ReviewLateObservationInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleReviewer); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
 	}
 	now := s.clock.Now()
-	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "observation.late_reviewed", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, reviewLateObservationPayload{ObservationID: observationID, Approved: input.Approved, Reason: strings.TrimSpace(input.Reason)}), caseID, input.ExpectedRevision, input.RequestID, "observation.late_reviewed", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if a.Case.Status.Closed() {
 			return nil, domain.StateError(a.Case.Status, "审批补录")
 		}

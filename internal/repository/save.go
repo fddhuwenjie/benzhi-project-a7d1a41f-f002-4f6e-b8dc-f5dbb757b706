@@ -2,8 +2,11 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"quarantine-workbench/internal/domain"
@@ -92,20 +95,92 @@ func timeValue(t *time.Time) any {
 	return formatTime(*t)
 }
 
-func loadRequest(ctx context.Context, tx *sql.Tx, id string) (json.RawMessage, bool, error) {
-	var raw string
-	err := tx.QueryRowContext(ctx, `SELECT response FROM request_results WHERE request_id=?`, id).Scan(&raw)
+// requestFingerprintKey carries a normalized request-semantic fingerprint through
+// the context so callers can participate in idempotency without changing the
+// Repository method signatures. When present, the value supplements the
+// case/operation identity so that only a true retry (same case, operation and
+// normalized request body) can replay.
+type requestFingerprintKey struct{}
+
+// WithRequestFingerprint returns a context that carries a normalized request
+// fingerprint used by Mutate to scope idempotent replays. Callers should pass
+// a hash of the normalized business request body (excluding transport meta such
+// as request_id, actor and role).
+func WithRequestFingerprint(ctx context.Context, fingerprint string) context.Context {
+	if fingerprint == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestFingerprintKey{}, fingerprint)
+}
+
+func requestFingerprintFrom(ctx context.Context) string {
+	if v, ok := ctx.Value(requestFingerprintKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+func loadRequest(ctx context.Context, tx *sql.Tx, id, expectedCaseID, operationType, requestHash string) (json.RawMessage, bool, error) {
+	var raw, storedOp, storedHash, storedCase string
+	err := tx.QueryRowContext(ctx, `SELECT response,operation_type,request_hash,case_id FROM request_results WHERE request_id=?`, id).Scan(&raw, &storedOp, &storedHash, &storedCase)
 	if err == sql.ErrNoRows {
 		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, err
 	}
+	if storedOp != operationType || storedHash != requestHash || (expectedCaseID != "" && storedCase != expectedCaseID) {
+		return nil, false, domain.NewError(domain.CodeConflict, "request_id 已被其他操作占用")
+	}
 	return json.RawMessage(raw), true, nil
 }
-func saveRequest(ctx context.Context, tx *sql.Tx, id, caseID string, response []byte, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO request_results(request_id,case_id,response,created_at) VALUES(?,?,?,?)`, id, caseID, string(response), formatTime(now))
+func saveRequest(ctx context.Context, tx *sql.Tx, id, caseID, operationType, requestHash string, response []byte, now time.Time) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO request_results(request_id,case_id,operation_type,request_hash,response,created_at) VALUES(?,?,?,?,?,?)`, id, caseID, operationType, requestHash, string(response), formatTime(now))
 	return err
+}
+
+// fingerprintCreate returns a stable hash of the normalized create-request
+// semantics derived from the case payload. Two create requests that target the
+// same accession and case data produce the same hash; differing data yields a
+// different hash so a reused request_id cannot replay an unrelated response.
+func fingerprintCreate(c domain.QuarantineCase) string {
+	payload := struct {
+		AccessionCode       string `json:"accession_code"`
+		ScientificName      string `json:"scientific_name"`
+		OriginRegion        string `json:"origin_region"`
+		IntroductionPurpose string `json:"introduction_purpose"`
+		QuarantineZone      string `json:"quarantine_zone"`
+	}{AccessionCode: strings.ToUpper(strings.TrimSpace(c.AccessionCode)), ScientificName: strings.TrimSpace(c.ScientificName), OriginRegion: strings.TrimSpace(c.OriginRegion), IntroductionPurpose: strings.TrimSpace(c.IntroductionPurpose), QuarantineZone: strings.TrimSpace(c.QuarantineZone)}
+	return fingerprint(payload)
+}
+
+// fingerprintMutate returns a stable hash of the mutation identity. When the
+// caller supplies a normalized request fingerprint through the context, it is
+// combined with the case/operation identity so that only a true retry (same
+// case, operation and normalized request body) can replay; otherwise the
+// case/operation/expected-revision tuple scopes the replay.
+func fingerprintMutate(ctx context.Context, caseID, eventType string, expected int64) string {
+	base := struct {
+		CaseID    string `json:"case_id"`
+		EventType string `json:"event_type"`
+		Expected  int64  `json:"expected_revision"`
+	}{CaseID: strings.TrimSpace(caseID), EventType: eventType, Expected: expected}
+	if fp := requestFingerprintFrom(ctx); fp != "" {
+		return fingerprint(struct {
+			Base       any    `json:"base"`
+			RequestFP  string `json:"request_fingerprint"`
+		}{Base: base, RequestFP: fp})
+	}
+	return fingerprint(base)
+}
+
+func fingerprint(payload any) string {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 func appendAudit(ctx context.Context, tx *sql.Tx, caseID, eventType, actor string, payload []byte, now time.Time) error {
 	var sequence int64

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"strings"
 
 	"quarantine-workbench/internal/domain"
 )
@@ -14,12 +15,19 @@ type OpenDeviationInput struct {
 	ContainmentAction string `json:"containment_action"`
 }
 
+type openDeviationPayload struct {
+	Severity          string `json:"severity"`
+	Scope             string `json:"scope"`
+	Finding           string `json:"finding"`
+	ContainmentAction string `json:"containment_action"`
+}
+
 func (s *Service) OpenDeviation(ctx context.Context, caseID string, input OpenDeviationInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleObserver, RoleReviewer); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
 	}
 	now := s.clock.Now()
-	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "deviation.opened", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, openDeviationPayload{Severity: strings.TrimSpace(input.Severity), Scope: strings.TrimSpace(input.Scope), Finding: strings.TrimSpace(input.Finding), ContainmentAction: strings.TrimSpace(input.ContainmentAction)}), caseID, input.ExpectedRevision, input.RequestID, "deviation.opened", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if err := a.Case.Restrict(); err != nil {
 			return nil, err
 		}
@@ -51,12 +59,20 @@ type VerifyDeviationInput struct {
 	NewContainmentAction string `json:"new_containment_action,omitempty"`
 }
 
+type verifyDeviationPayload struct {
+	DeviationID          string `json:"deviation_id"`
+	VerificationNote     string `json:"verification_note"`
+	VerificationEvidence string `json:"verification_evidence,omitempty"`
+	Result               string `json:"result,omitempty"`
+	NewContainmentAction string `json:"new_containment_action,omitempty"`
+}
+
 func (s *Service) VerifyDeviation(ctx context.Context, caseID, deviationID string, input VerifyDeviationInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleReviewer, RoleObserver); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
 	}
 	now := s.clock.Now()
-	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "deviation.verified", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, verifyDeviationPayload{DeviationID: deviationID, VerificationNote: strings.TrimSpace(input.VerificationNote), VerificationEvidence: strings.TrimSpace(input.VerificationEvidence), Result: strings.TrimSpace(input.Result), NewContainmentAction: strings.TrimSpace(input.NewContainmentAction)}), caseID, input.ExpectedRevision, input.RequestID, "deviation.verified", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		d, err := a.FindDeviation(deviationID)
 		if err != nil {
 			return nil, err

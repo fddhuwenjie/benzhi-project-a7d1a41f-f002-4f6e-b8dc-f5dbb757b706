@@ -46,12 +46,14 @@ func (r *Repository) Create(ctx context.Context, c domain.QuarantineCase, reques
 	if strings.TrimSpace(requestID) == "" {
 		return MutationResult{}, domain.FieldError("request_id", "request_id 不能为空")
 	}
+	operationType := "case.created"
+	requestHash := fingerprintCreate(c)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return MutationResult{}, err
 	}
 	defer tx.Rollback()
-	if response, ok, err := loadRequest(ctx, tx, requestID); err != nil {
+	if response, ok, err := loadRequest(ctx, tx, requestID, "", operationType, requestHash); err != nil {
 		return MutationResult{}, err
 	} else if ok {
 		return MutationResult{Response: response, Replayed: true}, nil
@@ -82,7 +84,7 @@ func (r *Repository) Create(ctx context.Context, c domain.QuarantineCase, reques
 	if err = appendAudit(ctx, tx, c.ID, "case.created", actor, response, c.CreatedAt); err != nil {
 		return MutationResult{}, err
 	}
-	if err = saveRequest(ctx, tx, requestID, c.ID, response, c.CreatedAt); err != nil {
+	if err = saveRequest(ctx, tx, requestID, c.ID, operationType, requestHash, response, c.CreatedAt); err != nil {
 		return MutationResult{}, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -95,12 +97,14 @@ func (r *Repository) Mutate(ctx context.Context, caseID string, expected int64, 
 	if strings.TrimSpace(requestID) == "" {
 		return MutationResult{}, domain.FieldError("request_id", "request_id 不能为空")
 	}
+	operationType := eventType
+	requestHash := fingerprintMutate(ctx, caseID, eventType, expected)
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return MutationResult{}, err
 	}
 	defer tx.Rollback()
-	if response, ok, err := loadRequest(ctx, tx, requestID); err != nil {
+	if response, ok, err := loadRequest(ctx, tx, requestID, caseID, operationType, requestHash); err != nil {
 		return MutationResult{}, err
 	} else if ok {
 		return MutationResult{Response: response, Replayed: true}, nil
@@ -135,7 +139,7 @@ func (r *Repository) Mutate(ctx context.Context, caseID string, expected int64, 
 	if err = appendAudit(ctx, tx, caseID, eventType, actor, payload, now); err != nil {
 		return MutationResult{}, err
 	}
-	if err = saveRequest(ctx, tx, requestID, caseID, response, now); err != nil {
+	if err = saveRequest(ctx, tx, requestID, caseID, operationType, requestHash, response, now); err != nil {
 		return MutationResult{}, err
 	}
 	if err = tx.Commit(); err != nil {

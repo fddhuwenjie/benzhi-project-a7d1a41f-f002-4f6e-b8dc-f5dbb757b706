@@ -40,6 +40,15 @@ type SubmitRiskInput struct {
 	TrialToken              string   `json:"trial_token,omitempty"`
 }
 
+type riskSubmissionPayload struct {
+	SpreadPathways          []string `json:"spread_pathways"`
+	PotentialHosts          []string `json:"potential_hosts"`
+	SourceConfidence        string   `json:"source_confidence"`
+	QuarantineDays          int      `json:"quarantine_days"`
+	ObservationIntervalDays int      `json:"observation_interval_days"`
+	ReleaseConditions       []string `json:"release_conditions"`
+}
+
 func (s *Service) TrialRisk(ctx context.Context, caseID string, input SubmitRiskInput) (RiskTrial, error) {
 	if err := require(input.Meta, RoleManager); err != nil {
 		return RiskTrial{}, err
@@ -99,7 +108,7 @@ func (s *Service) SubmitRisk(ctx context.Context, caseID string, input SubmitRis
 		return Envelope[domain.CaseAggregate]{}, domain.NewError(domain.CodeConflict, "风险试算已过期或参数已变更，请重新试算")
 	}
 	now := s.clock.Now()
-	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "risk.submitted", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, riskSubmissionPayload{SpreadPathways: input.SpreadPathways, PotentialHosts: input.PotentialHosts, SourceConfidence: strings.TrimSpace(input.SourceConfidence), QuarantineDays: input.QuarantineDays, ObservationIntervalDays: input.ObservationIntervalDays, ReleaseConditions: input.ReleaseConditions}), caseID, input.ExpectedRevision, input.RequestID, "risk.submitted", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if missing := a.Case.MissingDraftFields(); len(missing) > 0 {
 			e := domain.NewError(domain.CodeValidation, "个案资料尚不完整")
 			e.Details = map[string]any{"missing_fields": missing}
@@ -147,6 +156,12 @@ type ReviewInput struct {
 	Items    []domain.ReviewItem `json:"items,omitempty"`
 }
 
+type reviewRiskPayload struct {
+	Approved bool                `json:"approved"`
+	Reason   string              `json:"reason"`
+	Items    []domain.ReviewItem `json:"items,omitempty"`
+}
+
 func (s *Service) ReviewRisk(ctx context.Context, caseID string, input ReviewInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleReviewer); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
@@ -155,7 +170,7 @@ func (s *Service) ReviewRisk(ctx context.Context, caseID string, input ReviewInp
 		return Envelope[domain.CaseAggregate]{}, domain.FieldError("reason", "审核理由不能为空")
 	}
 	now := s.clock.Now()
-	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "risk.reviewed", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, reviewRiskPayload{Approved: input.Approved, Reason: strings.TrimSpace(input.Reason), Items: input.Items}), caseID, input.ExpectedRevision, input.RequestID, "risk.reviewed", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if a.Risk == nil {
 			return nil, domain.NewError(domain.CodeState, "个案尚未提交风险基线")
 		}
@@ -209,12 +224,14 @@ func (s *Service) ReviewRisk(ctx context.Context, caseID string, input ReviewInp
 	return Envelope[domain.CaseAggregate]{Data: value, Replayed: replayed}, err
 }
 
+type startObservationPayload struct{}
+
 func (s *Service) StartObservation(ctx context.Context, caseID string, meta Meta) (Envelope[domain.CaseAggregate], error) {
 	if err := require(meta, RoleManager, RoleReviewer); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
 	}
 	now := s.clock.Now()
-	result, err := s.repo.Mutate(ctx, caseID, meta.ExpectedRevision, meta.RequestID, "observation.started", meta.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, startObservationPayload{}), caseID, meta.ExpectedRevision, meta.RequestID, "observation.started", meta.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if a.Risk == nil || a.Risk.ReviewStatus != domain.ReviewApproved {
 			return nil, domain.NewError(domain.CodeState, "风险方案尚未获批")
 		}

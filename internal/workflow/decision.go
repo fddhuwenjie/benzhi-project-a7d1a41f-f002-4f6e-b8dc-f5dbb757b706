@@ -46,12 +46,14 @@ func (s *Service) PreviewEligibility(ctx context.Context, caseID string) (Eligib
 	return EligibilityView{Result: result, CaseRevision: agg.Case.Revision, Windows: windows}, nil
 }
 
+type confirmEligibilityPayload struct{}
+
 func (s *Service) ConfirmEligibility(ctx context.Context, caseID string, meta Meta) (Envelope[domain.CaseAggregate], error) {
 	if err := require(meta, RoleManager, RoleReviewer); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
 	}
 	now := s.clock.Now()
-	result, err := s.repo.Mutate(ctx, caseID, meta.ExpectedRevision, meta.RequestID, "eligibility.confirmed", meta.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, confirmEligibilityPayload{}), caseID, meta.ExpectedRevision, meta.RequestID, "eligibility.confirmed", meta.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if a.Risk == nil {
 			return nil, domain.NewError(domain.CodeState, "尚无风险基线")
 		}
@@ -75,6 +77,11 @@ type DecideInput struct {
 	Rationale string         `json:"rationale"`
 }
 
+type decidePayload struct {
+	Outcome   domain.Outcome `json:"outcome"`
+	Rationale string         `json:"rationale"`
+}
+
 func (s *Service) Decide(ctx context.Context, caseID string, input DecideInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleReviewer); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
@@ -84,7 +91,7 @@ func (s *Service) Decide(ctx context.Context, caseID string, input DecideInput) 
 	if err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
 	}
-	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "case.archived", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, decidePayload{Outcome: input.Outcome, Rationale: strings.TrimSpace(input.Rationale)}), caseID, input.ExpectedRevision, input.RequestID, "case.archived", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if a.Risk == nil {
 			return nil, domain.NewError(domain.CodeState, "尚无风险基线")
 		}

@@ -16,6 +16,14 @@ type UpdateCaseInput struct {
 	QuarantineZone      string `json:"quarantine_zone"`
 }
 
+type caseRevisionPayload struct {
+	AccessionCode       string `json:"accession_code"`
+	ScientificName      string `json:"scientific_name"`
+	OriginRegion        string `json:"origin_region"`
+	IntroductionPurpose string `json:"introduction_purpose"`
+	QuarantineZone      string `json:"quarantine_zone"`
+}
+
 // UpdateCase updates draft/returned case data while retaining the optimistic revision.
 func (s *Service) UpdateCase(ctx context.Context, caseID string, input UpdateCaseInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleManager); err != nil {
@@ -35,7 +43,7 @@ func (s *Service) UpdateCase(ctx context.Context, caseID string, input UpdateCas
 		er.Details = map[string]any{"case_id": existing.ID, "summary": existing}
 		return Envelope[domain.CaseAggregate]{}, er
 	}
-	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "case.revised", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+	result, err := s.repo.Mutate(fingerprintContext(ctx, caseRevisionPayload{AccessionCode: accession, ScientificName: strings.TrimSpace(input.ScientificName), OriginRegion: strings.TrimSpace(input.OriginRegion), IntroductionPurpose: strings.TrimSpace(input.IntroductionPurpose), QuarantineZone: strings.TrimSpace(input.QuarantineZone)}), caseID, input.ExpectedRevision, input.RequestID, "case.revised", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
 		if a.Case.Status != domain.StatusDraft && a.Case.Status != domain.StatusReturned {
 			return nil, domain.StateError(a.Case.Status, "修订个案资料")
 		}

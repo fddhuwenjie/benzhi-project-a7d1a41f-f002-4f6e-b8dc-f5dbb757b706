@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -74,6 +75,20 @@ func id(prefix string) string {
 		return prefix + time.Now().UTC().Format("20060102150405.000000000")
 	}
 	return prefix + hex.EncodeToString(b[:])
+}
+
+// fingerprintContext returns a child context that carries a stable hash of the
+// normalized request payload. It is used to scope idempotent replays so that a
+// reused request_id cannot replay the response of an operation with different
+// business semantics. The payload must contain only operation-specific fields
+// (excluding transport meta such as request_id, actor and role).
+func fingerprintContext(parent context.Context, payload any) context.Context {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return parent
+	}
+	sum := sha256.Sum256(raw)
+	return repository.WithRequestFingerprint(parent, hex.EncodeToString(sum[:]))
 }
 
 func decodeResult[T any](r repository.MutationResult) (T, bool, error) {

@@ -75,7 +75,17 @@ func (s *Service) TrialRisk(ctx context.Context, caseID string, input SubmitRisk
 	token := id("trial_")
 	trial := RiskTrial{Token: token, Revision: a.Case.Revision, Input: input, Result: res, SuggestedQuarantineDays: days, SuggestedObservationInterval: interval, CreatedAt: s.clock.Now()}
 	s.trialMu.Lock()
-	s.trials[caseID] = trial
+	// 同一个案在同一 revision 上可能由不同页面或操作人分别试算，按 token 独立保存。
+	// 清理严格过期（revision 已落后于当前）的试算，避免缓存无限增长并使旧 token 提前稳定失效。
+	if s.trials[caseID] == nil {
+		s.trials[caseID] = make(map[string]RiskTrial)
+	}
+	for tk, existing := range s.trials[caseID] {
+		if existing.Revision != a.Case.Revision {
+			delete(s.trials[caseID], tk)
+		}
+	}
+	s.trials[caseID][token] = trial
 	s.trialMu.Unlock()
 	return trial, nil
 }
@@ -88,18 +98,47 @@ func sameTrial(a, b SubmitRiskInput) bool {
 	return fmt.Sprint(a) == fmt.Sprint(b)
 }
 
+// trialFor 在持有锁的状态下按 token 查找回一个案的有效试算。
+func (s *Service) trialForLocked(caseID, token string) (RiskTrial, bool) {
+	if token == "" {
+		return RiskTrial{}, false
+	}
+	bucket, ok := s.trials[caseID]
+	if !ok {
+		return RiskTrial{}, false
+	}
+	trial, ok := bucket[token]
+	return trial, ok
+}
+
+// clearTrials 在风险基线提交成功后清空同一个案的全部试算缓存。
+// revision 已由仓储推进，其余 token 在下次提交时会在 trialForLocked 找不到而稳定失效。
+func (s *Service) clearTrialsLocked(caseID string) {
+	delete(s.trials, caseID)
+}
+
 func (s *Service) SubmitRisk(ctx context.Context, caseID string, input SubmitRiskInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleManager); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
 	}
 	s.trialMu.Lock()
-	trial, ok := s.trials[caseID]
+	trial, trialOK := s.trialForLocked(caseID, strings.TrimSpace(input.TrialToken))
 	s.trialMu.Unlock()
-	if !ok || strings.TrimSpace(input.TrialToken) == "" || trial.Token != input.TrialToken || trial.Revision != input.ExpectedRevision || !sameTrial(trial.Input, input) {
-		return Envelope[domain.CaseAggregate]{}, domain.NewError(domain.CodeConflict, "风险试算已过期或参数已变更，请重新试算")
+	// 试算缓存命中时先做独立校验：revision 不匹配或输入已变更则直接拒绝。
+	// 缓存未命中时不在此处提前失败——可能是成功提交后缓存已清空的幂等重放，
+	// 交给仓储 Mutate 判定：重放则返回首次结果，revision 已推进则稳定冲突。
+	if trialOK {
+		if trial.Revision != input.ExpectedRevision || !sameTrial(trial.Input, input) {
+			return Envelope[domain.CaseAggregate]{}, domain.NewError(domain.CodeConflict, "风险试算已过期或参数已变更，请重新试算")
+		}
 	}
 	now := s.clock.Now()
 	result, err := s.repo.Mutate(ctx, caseID, input.ExpectedRevision, input.RequestID, "risk.submitted", input.Actor, now, func(a *domain.CaseAggregate) (any, error) {
+		// Mutate 仅在非幂等重放时调用此闭包。若此时试算已不在缓存中，
+		// 说明 revision 仍未推进但 token 已失效，按试算过期处理。
+		if !trialOK {
+			return nil, domain.NewError(domain.CodeConflict, "风险试算已过期或参数已变更，请重新试算")
+		}
 		if missing := a.Case.MissingDraftFields(); len(missing) > 0 {
 			e := domain.NewError(domain.CodeValidation, "个案资料尚不完整")
 			e.Details = map[string]any{"missing_fields": missing}
@@ -134,8 +173,17 @@ func (s *Service) SubmitRisk(ctx context.Context, caseID string, input SubmitRis
 		return a, nil
 	})
 	if err != nil {
+		// 缓存未命中且仓储判定为修订号冲突（revision 已被其他操作推进）时，
+		// 对调用方统一表现为试算过期，避免暴露内部修订号细节。
+		if !trialOK && ErrorCode(err) == domain.CodeConflict {
+			return Envelope[domain.CaseAggregate]{}, domain.NewError(domain.CodeConflict, "风险试算已过期或参数已变更，请重新试算")
+		}
 		return Envelope[domain.CaseAggregate]{}, err
 	}
+	// 提交成功（或幂等重放）后，revision 已推进或结果已固化，清空该案全部试算缓存，使其余 token 稳定失效。
+	s.trialMu.Lock()
+	s.clearTrialsLocked(caseID)
+	s.trialMu.Unlock()
 	value, replayed, err := decodeResult[domain.CaseAggregate](result)
 	return Envelope[domain.CaseAggregate]{Data: value, Replayed: replayed}, err
 }

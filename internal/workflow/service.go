@@ -34,7 +34,7 @@ type Service struct {
 	repo    *repository.Repository
 	clock   policy.Clock
 	trialMu sync.Mutex
-	trials  map[string]RiskTrial
+	trials  map[string]map[string]RiskTrial
 }
 
 type RiskTrial struct {
@@ -48,7 +48,7 @@ type RiskTrial struct {
 }
 
 func New(repo *repository.Repository, clock policy.Clock) *Service {
-	return &Service{repo: repo, clock: clock, trials: make(map[string]RiskTrial)}
+	return &Service{repo: repo, clock: clock, trials: make(map[string]map[string]RiskTrial)}
 }
 
 func (s *Service) Repository() *repository.Repository { return s.repo }

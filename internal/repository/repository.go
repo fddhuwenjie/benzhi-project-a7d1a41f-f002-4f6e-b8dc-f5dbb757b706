@@ -148,6 +148,25 @@ func (r *Repository) Get(ctx context.Context, id string) (*domain.CaseAggregate,
 	return loadAggregate(ctx, r.db, id)
 }
 
+// FindRequest returns the persisted response for the given request_id, if any.
+// It reads directly from request_results so that previously committed requests
+// can be replayed even after a service restart, when in-memory trial state has
+// been lost. The boolean is true when a response was found.
+func (r *Repository) FindRequest(ctx context.Context, requestID string) (json.RawMessage, bool, error) {
+	if strings.TrimSpace(requestID) == "" {
+		return nil, false, nil
+	}
+	var raw string
+	err := r.db.QueryRowContext(ctx, `SELECT response FROM request_results WHERE request_id=?`, requestID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return json.RawMessage(raw), true, nil
+}
+
 func (r *Repository) List(ctx context.Context, status string) ([]domain.QuarantineCase, error) {
 	query := `SELECT id,accession_code,scientific_name,origin_region,introduction_purpose,quarantine_zone,status,risk_level,observation_started_at,expected_release_at,revision,created_at,closed_at FROM cases`
 	args := []any{}

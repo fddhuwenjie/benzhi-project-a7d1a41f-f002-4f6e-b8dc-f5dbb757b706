@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -91,6 +92,15 @@ func sameTrial(a, b SubmitRiskInput) bool {
 func (s *Service) SubmitRisk(ctx context.Context, caseID string, input SubmitRiskInput) (Envelope[domain.CaseAggregate], error) {
 	if err := require(input.Meta, RoleManager); err != nil {
 		return Envelope[domain.CaseAggregate]{}, err
+	}
+	if persisted, ok, err := s.repo.FindRequest(ctx, input.RequestID); err != nil {
+		return Envelope[domain.CaseAggregate]{}, err
+	} else if ok {
+		var aggregate domain.CaseAggregate
+		if e := json.Unmarshal(persisted, &aggregate); e != nil {
+			return Envelope[domain.CaseAggregate]{}, e
+		}
+		return Envelope[domain.CaseAggregate]{Data: aggregate, Replayed: true}, nil
 	}
 	s.trialMu.Lock()
 	trial, ok := s.trials[caseID]

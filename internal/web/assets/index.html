@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>植物引种隔离放行工作台</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><p class="eyebrow">植物园生物安全</p><h1>植物引种隔离放行工作台</h1></div>
+    <div class="identity"><label>当前角色<select id="role"><option value="manager">引种管理员</option><option value="reviewer">审核员</option><option value="observer">观察人员</option></select></label><label>操作人<input id="actor" value="工作台用户"></label></div>
+  </header>
+  <div id="notice" class="notice" hidden></div>
+  <main class="workspace">
+    <aside class="sidebar">
+      <div class="side-head"><h2>隔离个案</h2><button id="new-case" class="icon" title="新建个案" aria-label="新建个案">＋</button></div>
+      <div class="filters" role="group" aria-label="状态筛选"><button class="active" data-filter="">全部</button><button data-filter="pending_review">待审</button><button data-filter="observing">观察中</button><button data-filter="restricted">受限</button><button data-filter="released">已放行</button></div>
+      <div id="case-list" class="case-list"><p class="empty">正在加载…</p></div>
+    </aside>
+    <section id="detail" class="detail"><div class="welcome"><h2>选择一个隔离个案</h2><p>从左侧待办进入详情，或新建一份外来植物材料个案。</p></div></section>
+  </main>
+  <dialog id="case-dialog"><form id="case-form"><div class="dialog-head"><h2>新建隔离个案</h2><button type="button" class="icon close" aria-label="关闭">×</button></div><div class="form-grid"><label>材料编号<input name="accession_code" required></label><label>学名<input name="scientific_name" required></label><label>来源地区<input name="origin_region" required></label><label>引入用途<input name="introduction_purpose" required></label><label>隔离区域<input name="quarantine_zone" required></label></div><div class="actions"><button type="button" class="secondary close">取消</button><button type="submit">创建个案</button></div></form></dialog>
+  <script src="/assets/app.js"></script>
+</body>
+</html>
